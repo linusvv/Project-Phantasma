@@ -1,25 +1,20 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <ESPmDNS.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-#include <ESPmDNS.h>
 #include <math.h>
 #include <vector>
 #include "web_site.h"
 #include "demos.h"
-#include "secrets.h" // Credentials for Home WiFi
 
 // ================= KONFIGURATION =================
 const char *ssid = "RobotArmMonitor";
 const char *password = "ghostarm_secret";
-
-// Optional: Home WiFi for Internet (Voice Control)
-// credentials are now in include/secrets.h
-const char *router_ssid = ROUTER_SSID;
-const char *router_pass = ROUTER_PASS;
+const char *hostName = "ghostarm"; // URL: http://ghostarm.local
 
 // --- RECORDING DATA ---
 struct RecordedStep
@@ -340,6 +335,7 @@ void handleState()
     doc["recording"] = isRecording;
     doc["playing"] = isPlaying;
     doc["recSize"] = recordingBuffer.size();
+    doc["wifi_connected"] = (WiFi.status() == WL_CONNECTED);
 
     JsonArray servoArr = doc.createNestedArray("servos");
     for (int i = 0; i < 5; i++)
@@ -546,11 +542,9 @@ void handleSetMode()
 
 void handleSetServo()
 {
-    if (currentMode != MODE_WEB)
-    {
-        server.send(403, "text/plain", "Not in Web Mode");
-        return;
-    }
+    // Mode check removed to allow voice control override
+    // if (currentMode != MODE_WEB) ...
+
     if (server.hasArg("index") && server.hasArg("value"))
     {
         int idx = server.arg("index").toInt();
@@ -580,6 +574,48 @@ void handleSetXYZ()
         float p = server.arg("p").toFloat();
         calculateIK(x, y, z, p);
         server.send(200, "text/plain", "Moved");
+    }
+    else
+    {
+        server.send(400, "text/plain", "Missing args");
+    }
+}
+
+void handleConnectWifi()
+{
+    if (server.hasArg("ssid") && server.hasArg("pass"))
+    {
+        String s = server.arg("ssid");
+        String p = server.arg("pass");
+
+        Serial.print("Connecting to: ");
+        Serial.println(s);
+        WiFi.begin(s.c_str(), p.c_str());
+
+        // Block briefly to try connection (max 5 secs)
+        int tries = 0;
+        while (WiFi.status() != WL_CONNECTED && tries < 10)
+        {
+            delay(500);
+            tries++;
+        }
+
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            String ip = WiFi.localIP().toString();
+            server.send(200, "text/plain", "Connected! IP: " + ip);
+
+            // Re-broadcast MDNS (Clean Restart)
+            MDNS.end();
+            if (MDNS.begin(hostName))
+            {
+                MDNS.addService("http", "tcp", 80);
+            }
+        }
+        else
+        {
+            server.send(200, "text/plain", "Failed to connect. Check creds.");
+        }
     }
     else
     {
@@ -620,41 +656,20 @@ void setup()
 
     // 2. WiFi Setup (Combine AP and Station)
     WiFi.mode(WIFI_AP_STA);
+    // CRITICAL: Disable WiFi Power Save to prevent mDNS/HTTP dropping out after a while
+    WiFi.setSleep(false);
 
     // Setup SoftAP
     WiFi.softAP(ssid, password);
     Serial.print("Access Point Started. IP: ");
     Serial.println(WiFi.softAPIP());
 
-    // Connect to Router (if configured)
-    if (String(router_ssid) != "")
+    // START MDNS
+    if (MDNS.begin(hostName))
     {
-        Serial.print("Connecting to router: ");
-        Serial.println(router_ssid);
-        WiFi.begin(router_ssid, router_pass);
-        // Do not wait indefinitely, so AP mode still starts fast
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 10)
-        {
-            delay(500);
-            Serial.print(".");
-            attempts++;
-        }
-        if (WiFi.status() == WL_CONNECTED)
-        {
-            Serial.println("\nCombined Mode Success!");
-            Serial.print("Router IP: ");
-            Serial.println(WiFi.localIP());
-        }
-        else
-        {
-            Serial.println("\nRouter connection failed (continuing in AP mode)");
-        }
-    }
-
-    if (MDNS.begin("ghostarm"))
-    {
-        Serial.println("MDNS responder started (http://ghostarm.local)");
+        Serial.println("MDNS responder started");
+        Serial.printf("Access at http://%s.local\n", hostName);
+        MDNS.addService("http", "tcp", 80);
     }
 
     // 3. ESP-NOW Init
@@ -675,6 +690,7 @@ void setup()
     server.on("/set_xyz", handleSetXYZ);
     server.on("/run_script", handleRunScript);
     server.on("/record", handleRecord);
+    server.on("/connect_wifi", handleConnectWifi); // Added
     server.on("/download", handleDownload);
     server.on("/upload_script", HTTP_POST, []()
               { server.send(200, "text/plain", ""); }, onScriptUpload);

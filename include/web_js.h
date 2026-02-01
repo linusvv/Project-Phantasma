@@ -151,6 +151,31 @@ const char PAGE_JS[] PROGMEM = R"rawliteral(
     fetch(`/set_servo?index=${index}&value=${value}`);
   }
 
+  function connectWifi() {
+      const ssid = document.getElementById('ssid').value;
+      const pass = document.getElementById('pass').value;
+      const status = document.getElementById('wifi-status');
+      
+      if(!ssid) { alert("Enter SSID"); return; }
+      
+      status.innerText = "Connecting to " + ssid + "...";
+      
+      fetch('/connect_wifi?ssid=' + encodeURIComponent(ssid) + '&pass=' + encodeURIComponent(pass))
+      .then(r => r.text())
+      .then(msg => {
+          status.innerText = msg;
+          if(msg.includes("Connected")) {
+              const ip = msg.replace("Connected! IP: ", "");
+              alert("Success! Connect your phone to home WiFi '" + ssid + "'.\n\n" +
+                    "Try URL: http://ghostarm.local\n" + 
+                    "Fallback IP: http://" + ip);
+          }
+      })
+      .catch(e => {
+          status.innerText = "Error requesting connection (Check Monitor)";
+      });
+  }
+
   function sendIK() {
     const x = document.getElementById('ikX').value;
     const y = document.getElementById('ikY').value;
@@ -304,6 +329,17 @@ const char PAGE_JS[] PROGMEM = R"rawliteral(
                  btnScriptPlay.innerText = "⏹ Stop Playback";
              } else {
                  panel.style.display = 'none';
+             }
+        }
+        
+        // WiFi / Voice Visibility
+        // Show only if connected to WiFi (implies partial internet capability)
+        const voiceOverlay = document.getElementById('voice-overlay');
+        if(voiceOverlay) {
+             if(data.wifi_connected === true) {
+                 voiceOverlay.style.display = 'block';
+             } else {
+                 voiceOverlay.style.display = 'none';
              }
         }
         
@@ -471,27 +507,48 @@ const char PAGE_JS[] PROGMEM = R"rawliteral(
     }
   }
 
+  function showVoiceHelp() {
+      document.getElementById('voice-help').style.display = 'flex';
+  }
+
   function processCommand(cmd) {
     console.log("Processing voice command:", cmd);
     
-    // 1. Demos
+    // Command Normalization
+    cmd = cmd.toLowerCase();
+
+    // 0. Mode Switching
+    if (cmd.includes('mode controller') || cmd.includes('controller mode')) { setMode(0); return; }
+    if (cmd.includes('mode web') || cmd.includes('web mode')) { setMode(1); return; }
+    if (cmd.includes('mode script') || cmd.includes('script mode')) { setMode(2); return; }
+
+    // 1. Demos (Force switch to Script Mode for demos?) No, loadDemo works anytime usually but best in Mode 2
     if (cmd.includes('hello') || cmd.includes('wave')) loadDemo('hello');
     else if (cmd.includes('dance') || cmd.includes('party')) loadDemo('dancing');
     else if (cmd.includes('pick') || cmd.includes('place')) loadDemo('picknplace');
 
-    // 2. Gripper
-    else if (cmd.includes('open hand') || cmd.includes('release') || cmd.includes('drop')) updateServo(4, 0);
-    else if (cmd.includes('close hand') || cmd.includes('grab') || cmd.includes('catch')) updateServo(4, 100);
+    // 2. Gripper (Any Mode - Force Override)
+    // Note: If in Controller Mode, controller might fight back.
+    else if (cmd.includes('open') || cmd.includes('release') || cmd.includes('drop')) updateServo(4, 0);
+    else if (cmd.includes('close') || cmd.includes('grab') || cmd.includes('catch')) updateServo(4, 100);
 
-    // 3. Recording
-    else if (cmd.includes('start record') && currentMode === 0) {
-        // Only if in controller mode, but we can't switch modes via voice yet easily.
-        // Assuming we are in range
-        fetch('/record?action=start');
+    // 3. Recording (Controller Mode 0)
+    else if (cmd.includes('start record')) {
+        // If not in mode 0, switch?
+        if(currentMode !== 0) { 
+            setMode(0); 
+            setTimeout(() => fetch('/record?action=start'), 500);
+        } else {
+             fetch('/record?action=start');
+        }
     }
     else if ((cmd.includes('stop') && cmd.includes('record')) || cmd.includes('finish')) fetch('/record?action=stop');
     
     // 4. Playback / Stop
+    else if (cmd.includes('play record') || cmd.includes('replay')) {
+         if(currentMode !== 0) setMode(0);
+         setTimeout(() => fetch('/record?action=play'), 500); // Force 'play' explicitly
+    }
     else if (cmd.includes('play')) togglePlayback(); 
     else if (cmd.includes('stop')) {
         // Universal Stop
