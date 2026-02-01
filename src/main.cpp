@@ -5,14 +5,22 @@
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <ESPmDNS.h>
 #include <math.h>
 #include <vector>
 #include "web_site.h"
 #include "demos.h"
+#include "secrets.h" // Credentials for Home WiFi
 
 // ================= KONFIGURATION =================
 const char *ssid = "RobotArmMonitor";
 const char *password = "ghostarm_secret";
+
+// Optional: Home WiFi for Internet (Voice Control)
+// credentials are now in include/secrets.h
+const char *router_ssid = ROUTER_SSID;
+const char *router_pass = ROUTER_PASS;
+
 
 // --- RECORDING DATA ---
 struct RecordedStep
@@ -311,7 +319,12 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingDataPtr, int len)
 // --- WEB SERVER HANDLERS ---
 void handleRoot()
 {
-    server.send(200, "text/html", index_html);
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "text/html", "");
+    server.sendContent_P(PAGE_HTML_HEAD);
+    server.sendContent_P(PAGE_CSS);
+    server.sendContent_P(PAGE_HTML_BODY);
+    server.sendContent_P(PAGE_JS);
 }
 
 void handleState()
@@ -613,6 +626,31 @@ void setup()
     WiFi.softAP(ssid, password);
     Serial.print("Access Point Started. IP: ");
     Serial.println(WiFi.softAPIP());
+
+    // Connect to Router (if configured)
+    if (String(router_ssid) != "") {
+        Serial.print("Connecting to router: ");
+        Serial.println(router_ssid);
+        WiFi.begin(router_ssid, router_pass);
+        // Do not wait indefinitely, so AP mode still starts fast
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+            delay(500);
+            Serial.print(".");
+            attempts++;
+        }
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("\nCombined Mode Success!");
+            Serial.print("Router IP: ");
+            Serial.println(WiFi.localIP());
+        } else {
+             Serial.println("\nRouter connection failed (continuing in AP mode)");
+        }
+    }
+
+    if (MDNS.begin("ghostarm")) {
+        Serial.println("MDNS responder started (http://ghostarm.local)");
+    }
 
     // 3. ESP-NOW Init
     if (esp_now_init() != ESP_OK)
