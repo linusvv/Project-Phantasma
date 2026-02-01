@@ -21,7 +21,6 @@ const char *password = "ghostarm_secret";
 const char *router_ssid = ROUTER_SSID;
 const char *router_pass = ROUTER_PASS;
 
-
 // --- RECORDING DATA ---
 struct RecordedStep
 {
@@ -628,27 +627,33 @@ void setup()
     Serial.println(WiFi.softAPIP());
 
     // Connect to Router (if configured)
-    if (String(router_ssid) != "") {
+    if (String(router_ssid) != "")
+    {
         Serial.print("Connecting to router: ");
         Serial.println(router_ssid);
         WiFi.begin(router_ssid, router_pass);
         // Do not wait indefinitely, so AP mode still starts fast
         int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+        while (WiFi.status() != WL_CONNECTED && attempts < 10)
+        {
             delay(500);
             Serial.print(".");
             attempts++;
         }
-        if (WiFi.status() == WL_CONNECTED) {
+        if (WiFi.status() == WL_CONNECTED)
+        {
             Serial.println("\nCombined Mode Success!");
             Serial.print("Router IP: ");
             Serial.println(WiFi.localIP());
-        } else {
-             Serial.println("\nRouter connection failed (continuing in AP mode)");
+        }
+        else
+        {
+            Serial.println("\nRouter connection failed (continuing in AP mode)");
         }
     }
 
-    if (MDNS.begin("ghostarm")) {
+    if (MDNS.begin("ghostarm"))
+    {
         Serial.println("MDNS responder started (http://ghostarm.local)");
     }
 
